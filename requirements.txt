@@ -9,3 +9,4 @@ pandas
 python-dotenv
 Requests
 streamlit
+python-multipart
