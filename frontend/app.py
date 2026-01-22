@@ -9,6 +9,11 @@ load_dotenv()
 # Get API URL from environment or use default
 API_BASE_URL = os.getenv("BACKEND_API_URL", "http://localhost:8000")
 
+# Validate API_BASE_URL is set
+if not API_BASE_URL:
+    API_BASE_URL = "http://localhost:8000"
+    st.warning("⚠️ BACKEND_API_URL not configured. Using localhost as fallback.")
+
 # Page Configuration with custom theme
 st.set_page_config(
     page_title="GenAI Doc Assistant | RAG-Bot",

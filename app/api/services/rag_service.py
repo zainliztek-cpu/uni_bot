@@ -24,40 +24,66 @@ from app.api.core.config import (
 class RAGService:
     def __init__(self):
         print("---Initializing RAG Service with ChromaDB and Groq---")
+        print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")
+        print(f"LLM_MODEL: {LLM_MODEL}")
+        print(f"CHROMA_DB_PATH: {CHROMA_DB_PATH}")
+        print(f"GROQ_API_KEY present: {bool(GROQ_API_KEY)}")
 
-        # Initialize the embedding model
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name=EMBEDDING_MODEL
-        )
+        try:
+            # Initialize the embedding model
+            print("Initializing embeddings...")
+            self.embeddings = HuggingFaceEmbeddings(
+                model_name=EMBEDDING_MODEL
+            )
+            print("✓ Embeddings initialized")
 
-        # Initialize the chat model 
-        self.llm = ChatGroq(
-            model=LLM_MODEL,
-            api_key=GROQ_API_KEY,
-            temperature=0.7
-        )
+            # Initialize the chat model 
+            print("Initializing LLM...")
+            if not GROQ_API_KEY:
+                raise ValueError(
+                    "GROQ_API_KEY is not set. "
+                    "Please set the GROQ_API_KEY environment variable. "
+                    "Get it from: https://console.groq.com/"
+                )
+            
+            self.llm = ChatGroq(
+                model=LLM_MODEL,
+                api_key=GROQ_API_KEY,
+                temperature=0.7
+            )
+            print("✓ LLM initialized")
 
-        # Initialize the langchain vector store with ChromaDB
-        self.vector_store = Chroma(
-            embedding_function=self.embeddings,
-            persist_directory=CHROMA_DB_PATH,
-            collection_name="documents",
-        )
-        print("RAG service initialized successfully")
-        
-        # Initialize Agent Orchestrator for multi-agent reasoning
-        self.agent_orchestrator = AgentOrchestrator(self.llm, self.vector_store, k=4)
+            # Initialize the langchain vector store with ChromaDB
+            print(f"Initializing ChromaDB at {CHROMA_DB_PATH}...")
+            os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+            
+            self.vector_store = Chroma(
+                embedding_function=self.embeddings,
+                persist_directory=CHROMA_DB_PATH,
+                collection_name="documents",
+            )
+            print("✓ Vector store initialized")
+            
+            print("✓ RAG service initialized successfully!")
+            
+            # Initialize Agent Orchestrator for multi-agent reasoning
+            self.agent_orchestrator = AgentOrchestrator(self.llm, self.vector_store, k=4)
 
-        # Initialize in-memory storage for chat history (session_id -> list of messages)
-        self.chat_history = defaultdict(list)
-        # Initialize in-memory storage for document metadata (id -> filename)
-        self.document_metadata = {}
-        # Initialize in-memory storage for content hashes (content_hash -> filename)
-        self.content_hashes = {}
-        # Initialize session registry to track all sessions with timestamps
-        self.session_registry = {}  # session_id -> {created_at, last_accessed}
-        # Load existing document metadata from ChromaDB on startup
-        self._load_existing_document_metadata()
+            # Initialize in-memory storage for chat history (session_id -> list of messages)
+            self.chat_history = defaultdict(list)
+            # Initialize in-memory storage for document metadata (id -> filename)
+            self.document_metadata = {}
+            # Initialize in-memory storage for content hashes (content_hash -> filename)
+            self.content_hashes = {}
+            # Initialize session registry to track all sessions with timestamps
+            self.session_registry = {}  # session_id -> {created_at, last_accessed}
+            # Load existing document metadata from ChromaDB on startup
+            self._load_existing_document_metadata()
+            
+        except Exception as e:
+            print(f"❌ ERROR initializing RAG Service: {str(e)}")
+            print(f"Exception type: {type(e).__name__}")
+            raise
         # Load existing sessions on startup
         self._load_existing_sessions()
 
