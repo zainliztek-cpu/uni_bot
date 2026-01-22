@@ -15,3 +15,8 @@ requests
 streamlit
 python-multipart
 aiofiles
+sentence-transformers
+chromadb
+torch
+transformers
+sentencepiece
