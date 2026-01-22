@@ -1,0 +1,7 @@
+#!/bin/bash
+
+# Streamlit requirements for deployment
+streamlit
+requests
+python-dotenv
+pandas
