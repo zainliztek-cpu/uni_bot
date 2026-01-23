@@ -29,9 +29,10 @@ COPY . .
 EXPOSE 8000
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
     CMD python -c "import requests; requests.get('http://localhost:8000/health-check', timeout=5)"
 
 # Run the application with gunicorn and uvicorn
-# Reduced workers to 2 for free tier, increased timeout to 300s to allow model loading
-CMD ["gunicorn", "--workers", "2", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "300", "--graceful-timeout", "30", "main:app"]
+# Single worker for free tier (512MB RAM), increased timeouts for model loading
+# max_requests recycles worker to prevent memory bloat
+CMD ["gunicorn", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "600", "--graceful-timeout", "60", "--max-requests", "100", "--max-requests-jitter", "20", "main:app"]
