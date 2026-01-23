@@ -25,7 +25,9 @@ if not GROQ_API_KEY:
 
 # Model Configuration - using efficient models for memory constraints
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-large-en-v1.5")
-LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.3-70b-versatile")
+# llama-3.1-8b-instant: 7B-sized model, faster inference, perfect for RAG
+# Alternative models: gemma-7b-it (7B exact), mixtral-8x7b, llama-3.1-70b-versatile
+LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")
 
 # Vector store configuration
 VECTOR_DIMENSION = int(os.getenv("VECTOR_DIMENSION", "1024"))
