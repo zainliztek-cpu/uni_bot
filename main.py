@@ -23,7 +23,8 @@ def health_check():
         "status": "ok",
         "version": "1.0.2",
         "environment": "production",
-        "uptime_seconds": int(time.time() - START_TIME)
+        "uptime_seconds": int(time.time() - START_TIME),
+        "note": "RAG service initializes on first API call (not on startup) to prevent timeouts"
     }
 
 @app.get("/api/debug/status")
@@ -36,34 +37,31 @@ def debug_status():
         # Check API key
         api_key_present = bool(os.getenv("GROQ_API_KEY"))
         
-        # Try to initialize RAG service
-        from app.api.services.rag_service import RAGService
-        try:
-            rag_service = RAGService()
-            llm_initialized = True
-            embeddings_initialized = True
-            vector_store_ready = True
-            error_message = None
-        except Exception as e:
-            llm_initialized = False
-            embeddings_initialized = False
-            vector_store_ready = False
-            error_message = str(e)
+        # Check if RAG service has been initialized
+        from app.api.rag_api import _rag_service
         
-        status = "ALL SYSTEMS OPERATIONAL" if all([
-            api_key_present,
-            llm_initialized,
-            embeddings_initialized,
-            vector_store_ready
-        ]) else "SOME SYSTEMS FAILED"
+        if _rag_service is None:
+            # Service hasn't been initialized yet - that's OK, it will on first request
+            return {
+                "api_key_present": api_key_present,
+                "llm_initialized": False,
+                "embeddings_initialized": False,
+                "vector_store_ready": False,
+                "status": "NOT_YET_INITIALIZED",
+                "error": "Service will initialize on first API call",
+                "uptime_seconds": int(time.time() - START_TIME)
+            }
+        
+        # Service exists, report its status
+        status = "ALL SYSTEMS OPERATIONAL"
         
         return {
             "api_key_present": api_key_present,
-            "llm_initialized": llm_initialized,
-            "embeddings_initialized": embeddings_initialized,
-            "vector_store_ready": vector_store_ready,
+            "llm_initialized": True,
+            "embeddings_initialized": True,
+            "vector_store_ready": True,
             "status": status,
-            "error": error_message,
+            "error": None,
             "uptime_seconds": int(time.time() - START_TIME)
         }
     except Exception as e:
