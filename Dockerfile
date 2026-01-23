@@ -113,7 +113,7 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 CMD ["gunicorn", \
      "--workers", "1", \
      "--worker-class", "uvicorn.workers.UvicornWorker", \
-     "--bind", "0.0.0.0:${PORT}", \
+     "--bind", "0.0.0.0:8000", \
      "--timeout", "600", \
      "--graceful-timeout", "60", \
      "--max-requests", "100", \
