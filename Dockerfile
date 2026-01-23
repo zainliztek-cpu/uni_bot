@@ -34,5 +34,8 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
 
 # Run the application with gunicorn and uvicorn
 # Single worker for free tier (512MB RAM), increased timeouts for model loading
-# max_requests recycles worker to prevent memory bloat
-CMD ["gunicorn", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "600", "--graceful-timeout", "60", "--max-requests", "100", "--max-requests-jitter", "20", "main:app"]
+# --timeout 600s: Models (HF embeddings) need 5+ min to load on first request
+# --workers 1: Prevent duplicate model loading in multiple processes (saves ~260MB RAM)
+# --max-requests 100: Recycle worker periodically to prevent memory bloat
+# Note: uvicorn.workers.UvicornWorker uses 1 thread by default, but we ensure it explicitly
+CMD ["gunicorn", "--workers", "1", "--worker-class", "uvicorn.workers.UvicornWorker", "--bind", "0.0.0.0:8000", "--timeout", "600", "--graceful-timeout", "60", "--max-requests", "100", "--max-requests-jitter", "20", "--threads", "1", "main:app"]

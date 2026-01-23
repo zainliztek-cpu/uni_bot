@@ -2,6 +2,11 @@ from fastapi import UploadFile, File, Form, HTTPException
 import os
 import tempfile
 from app.api.services.rag_service import RAGService
+# Import memory-safe config constants
+from app.api.core.config import (
+    MAX_UPLOAD_SIZE_BYTES,
+    MAX_QUERY_LENGTH,
+)
 
 # Global service instance - starts as None, initialized on first use
 _rag_service = None
@@ -37,13 +42,23 @@ async def ingest_document(file: UploadFile = File(...)):
             detail=f"Unsupported file type: {file_ext}. Supported formats: PDF, TXT, CSV, XLSX, XLS"
         )
     
+    # Safeguard: Check file size before reading (prevent large uploads that crash process)
+    # file.size may not always be available, so we check after reading
+    # Store file in memory safely
+    file_content = await file.read()
+    if len(file_content) > MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File too large ({len(file_content)} bytes). Maximum allowed: {MAX_UPLOAD_SIZE_BYTES} bytes ({MAX_UPLOAD_SIZE_BYTES // (1024*1024)}MB)"
+        )
+    
     # Create a temporary directory to store the file
     with tempfile.TemporaryDirectory() as temp_dir:
         file_path = os.path.join(temp_dir, file.filename)
 
         # Write the uploaded file to ingest the document
         with open(file_path, "wb") as f:
-            f.write(await file.read())
+            f.write(file_content)
 
         try:
             # Call the service to ingest the document
@@ -60,6 +75,7 @@ async def ingest_document(file: UploadFile = File(...)):
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to ingest document: {str(e)}")
 
+
 # Query Logic
 async def get_query_response(query: str = Form(...), session_id: str = Form(...), document_name: str = Form(None)):
     """
@@ -68,6 +84,13 @@ async def get_query_response(query: str = Form(...), session_id: str = Form(...)
     """
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    # Safeguard: Prevent extremely long queries that could cause token explosion or memory issues
+    if len(query) > MAX_QUERY_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Query too long ({len(query)} chars). Maximum allowed: {MAX_QUERY_LENGTH} characters"
+        )
 
     try:
         rag_service = get_rag_service()
@@ -75,6 +98,7 @@ async def get_query_response(query: str = Form(...), session_id: str = Form(...)
         return answer
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+
 
 
 # Agent-based Query Logic
@@ -85,6 +109,13 @@ async def get_query_response_with_agents(query: str = Form(...), session_id: str
     """
     if not query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
+    
+    # Safeguard: Prevent extremely long queries that could cause token explosion or memory issues
+    if len(query) > MAX_QUERY_LENGTH:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Query too long ({len(query)} chars). Maximum allowed: {MAX_QUERY_LENGTH} characters"
+        )
 
     try:
         rag_service = get_rag_service()
@@ -92,6 +123,7 @@ async def get_query_response_with_agents(query: str = Form(...), session_id: str
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to generate answer with agents: {str(e)}")
+
 
 # Document Management Endpoints
 async def get_documents():

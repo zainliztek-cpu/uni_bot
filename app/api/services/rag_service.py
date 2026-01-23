@@ -19,75 +19,108 @@ from app.api.core.config import (
     GROQ_API_KEY,
     EMBEDDING_MODEL,
     LLM_MODEL,
+    EMBEDDING_BATCH_SIZE,
+    MAX_RETRIEVED_CHUNKS,
+    MAX_DOCUMENTS_IN_MEMORY,
+    CHUNK_SIZE,
+    CHUNK_OVERLAP,
 )
 
 class RAGService:
     def __init__(self):
-        print("---Initializing RAG Service with ChromaDB and Groq---")
-        print(f"EMBEDDING_MODEL: {EMBEDDING_MODEL}")
-        print(f"LLM_MODEL: {LLM_MODEL}")
-        print(f"CHROMA_DB_PATH: {CHROMA_DB_PATH}")
-        print(f"GROQ_API_KEY present: {bool(GROQ_API_KEY)}")
+        """
+        Initialize RAG Service.
+        Note: Heavy models are NOT initialized here.
+        They're lazy-loaded on first API request via get_embeddings(), get_llm(), get_vector_store().
+        This prevents 502 errors on Render during startup.
+        """
+        print("[RAGService] Initializing container (models deferred)...")
+        
+        # In-memory storage - bounded to prevent unlimited growth
+        self.chat_history = defaultdict(list)  # session_id -> [messages]
+        self.document_metadata = {}  # doc_id -> {name, chunks, hash}
+        self.content_hashes = {}  # content_hash -> doc_id (prevent duplicates)
+        self.session_registry = {}  # session_id -> {created, last_accessed}
+        
+        print("[RAGService] ✓ Container ready (models will load on first request)")
 
-        try:
-            # Initialize the embedding model
-            print("Initializing embeddings...")
-            self.embeddings = HuggingFaceEmbeddings(
-                model_name=EMBEDDING_MODEL
-            )
-            print("✓ Embeddings initialized")
-
-            # Initialize the chat model 
-            print("Initializing LLM...")
-            if not GROQ_API_KEY:
-                raise ValueError(
-                    "GROQ_API_KEY is not set. "
-                    "Please set the GROQ_API_KEY environment variable. "
-                    "Get it from: https://console.groq.com/"
+    # Lazy Singleton Getters - Models load only on first request to save memory and startup time
+    def get_embeddings(self):
+        """Lazy-load HuggingFace embeddings on first request. Prevents 5+ min startup time."""
+        if not hasattr(self, '_embeddings_instance') or self._embeddings_instance is None:
+            print("[Embeddings] Loading HuggingFaceEmbeddings model (this may take 2-5 min)...")
+            try:
+                # batch_size reduced from 32 to 8 for memory safety on 512MB Render free tier
+                # Lower batch = lower peak memory but slower processing
+                self._embeddings_instance = HuggingFaceEmbeddings(
+                    model_name=EMBEDDING_MODEL,
+                    model_kwargs={"device": "cpu"},
+                    encode_kwargs={"normalize_embeddings": True, "batch_size": EMBEDDING_BATCH_SIZE}
                 )
-            
-            self.llm = ChatGroq(
-                model=LLM_MODEL,
-                api_key=GROQ_API_KEY,
-                temperature=0.7
-            )
-            print("✓ LLM initialized")
+                print("[Embeddings] ✓ Model loaded successfully")
+            except Exception as e:
+                print(f"[Embeddings] ❌ Failed to load: {str(e)}")
+                raise
+        return self._embeddings_instance
 
-            # Initialize the langchain vector store with ChromaDB
-            print(f"Initializing ChromaDB at {CHROMA_DB_PATH}...")
-            os.makedirs(CHROMA_DB_PATH, exist_ok=True)
-            
-            self.vector_store = Chroma(
-                embedding_function=self.embeddings,
-                persist_directory=CHROMA_DB_PATH,
-                collection_name="documents",
-            )
-            print("✓ Vector store initialized")
-            
-            print("✓ RAG service initialized successfully!")
-            
-            # Initialize Agent Orchestrator for multi-agent reasoning
-            self.agent_orchestrator = AgentOrchestrator(self.llm, self.vector_store, k=4)
+    def get_llm(self):
+        """Lazy-load ChatGroq on first request. Validates API key exists."""
+        if not hasattr(self, '_llm_instance') or self._llm_instance is None:
+            print("[LLM] Initializing ChatGroq (remote API, negligible memory impact)...")
+            try:
+                if not GROQ_API_KEY:
+                    raise ValueError(
+                        "GROQ_API_KEY not set. Get it from: https://console.groq.com/"
+                    )
+                self._llm_instance = ChatGroq(
+                    model=LLM_MODEL,
+                    api_key=GROQ_API_KEY,
+                    temperature=0.7
+                )
+                print("[LLM] ✓ ChatGroq initialized")
+            except Exception as e:
+                print(f"[LLM] ❌ Failed to initialize: {str(e)}")
+                raise
+        return self._llm_instance
 
-            # Initialize in-memory storage for chat history (session_id -> list of messages)
-            self.chat_history = defaultdict(list)
-            # Initialize in-memory storage for document metadata (id -> filename)
-            self.document_metadata = {}
-            # Initialize in-memory storage for content hashes (content_hash -> filename)
-            self.content_hashes = {}
-            # Initialize session registry to track all sessions with timestamps
-            self.session_registry = {}  # session_id -> {created_at, last_accessed}
-            # Load existing document metadata from ChromaDB on startup
-            self._load_existing_document_metadata()
-            
-        except Exception as e:
-            print(f"❌ ERROR initializing RAG Service: {str(e)}")
-            print(f"Exception type: {type(e).__name__}")
-            raise
-        # Load existing sessions on startup
-        self._load_existing_sessions()
+    def get_vector_store(self):
+        """
+        Lazy-load ChromaDB vector store on first request.
+        ChromaDB in-memory embeddings cache is the 2nd biggest memory consumer after embedding model.
+        """
+        if not hasattr(self, '_vector_store_instance') or self._vector_store_instance is None:
+            print("[VectorStore] Loading ChromaDB from persistent directory...")
+            try:
+                os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+                self._vector_store_instance = Chroma(
+                    embedding_function=self.get_embeddings(),
+                    persist_directory=CHROMA_DB_PATH,
+                    collection_name="documents",
+                )
+                print("[VectorStore] ✓ ChromaDB loaded")
+            except Exception as e:
+                print(f"[VectorStore] ❌ Failed to load: {str(e)}")
+                raise
+        return self._vector_store_instance
 
-    def _validate_file(self, file_path: str, file_type: str) -> bool:
+    def get_agent_orchestrator(self):
+        """Lazy-load agent orchestrator on first request."""
+        if not hasattr(self, '_agent_orchestrator_instance') or self._agent_orchestrator_instance is None:
+            print("[Agent] Initializing AgentOrchestrator...")
+            try:
+                # MAX_RETRIEVED_CHUNKS reduced from 4 to 3 for memory safety
+                self._agent_orchestrator_instance = AgentOrchestrator(
+                    self.get_llm(), 
+                    self.get_vector_store(), 
+                    k=MAX_RETRIEVED_CHUNKS
+                )
+                print("[Agent] ✓ AgentOrchestrator initialized")
+            except Exception as e:
+                print(f"[Agent] ❌ Failed to initialize: {str(e)}")
+                raise
+        return self._agent_orchestrator_instance
+
+
         """Validate file exists and has correct extension"""
         if not os.path.exists(file_path):
             raise ValueError(f"File not found: {file_path}")
@@ -160,8 +193,11 @@ class RAGService:
         documents = self._load_document_by_type(file_path, file_type)
         print(f"Loaded {len(documents)} document pages")
 
-        # Split the document into chunks
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        # Split the document into chunks using config constants (reduced from 1000/200 for memory)
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=CHUNK_SIZE, 
+            chunk_overlap=CHUNK_OVERLAP
+        )
         docs_chunks = text_splitter.split_documents(documents)
         
         # Assign a unique document ID and add metadata to each chunk
@@ -174,13 +210,18 @@ class RAGService:
         chunk_count = len(docs_chunks)
         print(f"Split document into {len(docs_chunks)} chunks")
 
-        # Ingest chunk into the vector store
+        # Ingest chunk into the vector store (uses lazy-loaded embeddings)
         try:
             print("---Ingesting document chunks into ChromaDB---")
-            self.vector_store.add_documents(docs_chunks)
+            self.get_vector_store().add_documents(docs_chunks)
             print("Document ingested successfully")
             
-            # Store document metadata
+            # Store document metadata with bounds check
+            if len(self.document_metadata) >= MAX_DOCUMENTS_IN_MEMORY:
+                # Remove oldest document if limit exceeded
+                oldest_id = next(iter(self.document_metadata))
+                del self.document_metadata[oldest_id]
+            
             self.document_metadata[document_id] = {"filename": filename, "content_hash": content_hash}
             self.content_hashes[content_hash] = filename
             
@@ -210,12 +251,12 @@ class RAGService:
             # If not, you might need to retrieve all and then filter in-memory.
             print(f"Searching for {k} relevant documents within document: '{document_name}'..")
             # This is a simplified filter. Actual implementation might vary based on ChromaDB's capabilities.
-            search_results = self.vector_store.similarity_search_with_score(
+            search_results = self.get_vector_store().similarity_search_with_score(
                 query, k=k, filter={"filename": document_name}
             )
         else:
             print(f"Searching for {k} relevant documents across all documents..")
-            search_results = self.vector_store.similarity_search_with_score(query, k=k)
+            search_results = self.get_vector_store().similarity_search_with_score(query, k=k)
         print(search_results)
         if not search_results:
             print("No relevant documents found")
@@ -235,7 +276,7 @@ class RAGService:
 
         print("Generating answer with LLM...")
         try:
-            response = self.llm.invoke(prompt)
+            response = self.get_llm().invoke(prompt)
             # Handle different response types
             if hasattr(response, 'content'):
                 answer_text = response.content
@@ -262,7 +303,7 @@ class RAGService:
         print(f"Received query for agent-based reasoning: '{query}'")
         
         try:
-            result = self.agent_orchestrator.execute(query, session_id, document_name)
+            result = self.get_agent_orchestrator().execute(query, session_id, document_name)
             return result
         except Exception as e:
             print(f"Error in agent-based reasoning: {e}")
@@ -275,7 +316,7 @@ class RAGService:
         print("Loading existing document metadata from ChromaDB...")
         try:
             # Retrieve all documents from the collection with their metadata
-            collection_results = self.vector_store._collection.get(include=['metadatas'])
+            collection_results = self.get_vector_store()._collection.get(include=['metadatas'])
             
             if not collection_results or not collection_results.get('metadatas'):
                 print("No documents found in ChromaDB collection.")
@@ -328,7 +369,7 @@ class RAGService:
             # is more appropriate here if available. Otherwise, we'd need to retrieve and then delete by IDs.
             
             # Assuming `delete` can filter by metadata:
-            self.vector_store._collection.delete(where={"document_id": document_id})
+            self.get_vector_store()._collection.delete(where={"document_id": document_id})
             
             # Remove from in-memory metadata
             content_hash = self.document_metadata[document_id]["content_hash"]
