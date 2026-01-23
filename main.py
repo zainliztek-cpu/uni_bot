@@ -13,7 +13,8 @@ app = FastAPI(
 )
 
 # Simple root endpoint to check if the server is running
-@app.get("/")
+# Use api_route to accept both GET and HEAD requests (Render sends HEAD for health checks)
+@app.api_route("/", methods=["GET", "HEAD"])
 def read_root():
     return {'message': 'API is running'}
 
@@ -81,3 +82,28 @@ app.include_router(
     prefix="/api",
     tags=["RAG System"]
 )
+
+# ============================================================================
+# LOCAL DEVELOPMENT - Run with: python main.py
+# Production on Render: Uses gunicorn (see Dockerfile)
+# ============================================================================
+if __name__ == "__main__":
+    import uvicorn
+    
+    # Get port from environment or default to 8000
+    PORT = int(os.getenv("PORT", 8000))
+    HOST = os.getenv("HOST", "0.0.0.0")
+    
+    print(f"🚀 Starting FastAPI server on {HOST}:{PORT}")
+    print(f"📚 API docs: http://localhost:{PORT}/docs")
+    print(f"🏥 Health check: http://localhost:{PORT}/health-check")
+    
+    # Run uvicorn directly for development
+    uvicorn.run(
+        app,
+        host=HOST,
+        port=PORT,
+        reload=False,  # Set to True for auto-reload on code changes (dev only)
+        log_level="info"
+    )
+
